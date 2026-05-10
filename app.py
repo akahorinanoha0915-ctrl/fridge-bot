@@ -28,6 +28,11 @@ def delete_item(item):
     supabase.table('fridge').delete().eq('item', item).execute()
 
 
+@app.route('/')
+def health():
+    return 'OK'
+
+
 @app.route('/callback', methods=['POST'])
 def callback():
     signature = request.headers['X-Line-Signature']
