@@ -1,14 +1,18 @@
 import os
 import re
 from flask import Flask, request, abort
-from linebot import LineBotApi, WebhookHandler
-from linebot.exceptions import InvalidSignatureError
-from linebot.models import MessageEvent, TextMessage, TextSendMessage
+from linebot.v3 import WebhookHandler
+from linebot.v3.exceptions import InvalidSignatureError
+from linebot.v3.webhooks import MessageEvent, TextMessageContent
+from linebot.v3.messaging import (
+    Configuration, ApiClient, MessagingApi,
+    ReplyMessageRequest, TextMessage
+)
 from supabase import create_client
 
 app = Flask(__name__)
 
-line_bot_api = LineBotApi(os.environ['LINE_CHANNEL_ACCESS_TOKEN'])
+configuration = Configuration(access_token=os.environ['LINE_CHANNEL_ACCESS_TOKEN'])
 handler = WebhookHandler(os.environ['LINE_CHANNEL_SECRET'])
 supabase = create_client(os.environ['SUPABASE_URL'], os.environ['SUPABASE_KEY'])
 
@@ -35,15 +39,21 @@ def callback():
     return 'OK'
 
 
-@handler.add(MessageEvent, message=TextMessage)
+@handler.add(MessageEvent, message=TextMessageContent)
 def handle_message(event):
     text = event.message.text.strip()
     reply = process_command(text)
-    line_bot_api.reply_message(event.reply_token, TextSendMessage(text=reply))
+    with ApiClient(configuration) as api_client:
+        line_bot_api = MessagingApi(api_client)
+        line_bot_api.reply_message(
+            ReplyMessageRequest(
+                reply_token=event.reply_token,
+                messages=[TextMessage(text=reply)]
+            )
+        )
 
 
 def process_command(text):
-    # 確認
     if text in ['確認', '一覧', '冷蔵庫', 'リスト']:
         fridge = get_fridge()
         if not fridge:
@@ -53,7 +63,6 @@ def process_command(text):
             lines.append(f'・{item}：{qty}')
         return '\n'.join(lines)
 
-    # ヘルプ
     if text in ['ヘルプ', 'help', '使い方']:
         return (
             '📋 使い方：\n'
@@ -65,7 +74,6 @@ def process_command(text):
             '「確認」→ 在庫一覧を表示'
         )
 
-    # 追加
     add_match = re.match(
         r'^(.+?)\s*(\d+)?\s*(?:個|本|袋|枚|缶|パック|kg|g|L|ml)?\s*追加$', text
     )
@@ -77,7 +85,6 @@ def process_command(text):
         upsert_item(item, new_qty)
         return f'✅ {item} を {qty} 追加しました。（現在：{new_qty}）'
 
-    # 消費
     use_match = re.match(
         r'^(.+?)\s*(\d+)?\s*(?:個|本|袋|枚|缶|パック|kg|g|L|ml)?\s*(?:使った|消費|食べた|飲んだ|なくなった|減った)$',
         text
@@ -95,7 +102,6 @@ def process_command(text):
         upsert_item(item, new_qty)
         return f'✅ {item} を {qty} 消費しました。（残り：{new_qty}）'
 
-    # 削除
     del_match = re.match(r'^(.+?)\s*削除$', text)
     if del_match:
         item = del_match.group(1).strip()
